@@ -78,6 +78,7 @@ class GameScene: SKScene {
     private let chancesLabel = SKLabelNode(fontNamed: "Arial Bold")
     private var discardLeft = 3
     private let discardLeftLabel = SKLabelNode(fontNamed: "Arial Bold")
+    private let comboInfoLabel = SKLabelNode(fontNamed: "Arial Bold")
     private let gameOverLabel = SKLabelNode(fontNamed: "Arial Bold")
     private var isAnimating = false
 
@@ -138,11 +139,22 @@ class GameScene: SKScene {
 
     // MARK: - Button Visibility
     private func updateButtonVisibility() {
-        attackButton.isHidden = selectedCards.isEmpty
-        // disable discard when none left
-        let canDiscard = !selectedCards.isEmpty && discardLeft > 0
-        discardButton.isHidden = !canDiscard
+        let hasSelection = !selectedCards.isEmpty
+
+        // Attack button only when you have a selection
+        attackButton.isHidden = !hasSelection
+
+        // Discard button also only when you have a selection…
+        discardButton.isHidden = !hasSelection
+
+        if discardLeft == 0 {
+            discardButton.color = .gray
+            discardButton.colorBlendFactor = 0.7
+        } else {
+            discardButton.colorBlendFactor = 0
+        }
     }
+
 
     // MARK: - Boss Setup
     private func setupBoss() {
@@ -188,6 +200,13 @@ class GameScene: SKScene {
         discardLeftLabel.horizontalAlignmentMode = .left
         discardLeftLabel.position = CGPoint(x: 50, y: chancesLabel.position.y - 50)
         addChild(discardLeftLabel)
+        
+        comboInfoLabel.text = ""
+        comboInfoLabel.fontSize = 24
+        comboInfoLabel.fontColor = .yellow
+        comboInfoLabel.horizontalAlignmentMode = .left
+        comboInfoLabel.position = CGPoint(x: 50, y: discardLeftLabel.position.y - 40)
+        addChild(comboInfoLabel)
     }
 
     // MARK: - Touch Handling
@@ -197,7 +216,11 @@ class GameScene: SKScene {
 
         if !selectedCards.isEmpty {
             if attackButton.contains(location) { handleAttack(); return }
-            if discardButton.contains(location) { handleDiscard(); return }
+            if discardButton.contains(location) {
+                // only allow if still have discards left
+                guard discardLeft > 0 else { return }
+                handleDiscard(); return
+            }
         }
         for card in playAreaCards where card.contains(location) && !card.isAnimating && !isAnimating {
             handleCardSelection(card); return
@@ -228,6 +251,7 @@ class GameScene: SKScene {
             card.isSelected = true
             self.selectedCards.append(card)
             self.updateButtonVisibility()
+            self.updateComboInfo()
         }
     }
 
@@ -240,6 +264,7 @@ class GameScene: SKScene {
             card.isSelected = false
             self.selectedCards.removeAll { $0 == card }
             self.updateButtonVisibility()
+            self.updateComboInfo()
         }
     }
 
@@ -290,17 +315,6 @@ class GameScene: SKScene {
 
     private func replaceSelectedCards() {
         guard !selectedCards.isEmpty else { return }
-        
-        // decrement discardLeft only when discarding
-        if discardButton.contains(discardButton.position) {
-            discardLeft = max(0, discardLeft - 1)
-            discardLeftLabel.text = "Discards Left: \(discardLeft)"
-            if discardLeft == 0 {
-                discardButton.color = .gray
-                discardButton.colorBlendFactor = 0.7
-            }
-        }
-        
         let positions = selectedCards.map { $0.originalPosition }
         selectedCards.forEach { card in
             discardPile.append(CardDefinition(element: card.cardType, value: card.attackValue))
@@ -346,13 +360,12 @@ class GameScene: SKScene {
         attackChances -= 1
         chancesLabel.text = "Attacks Left: \(attackChances)"
 
-        let baseAttack = selectedCards.reduce(0) { $0 + $1.attackValue }
-        let multiplier = calculateComboMultiplier(for: selectedCards)
+        let base = selectedCards.reduce(0) { $0 + $1.attackValue }
+        let (name, mult) = evaluateCombo(for: selectedCards)
+        let total = Int(Double(base) * mult)
+        print("Attack: \(name) ×\(mult) → Base = \(base), Damage = \(total)")
         
-        let totalDamage = Int(Double(baseAttack) * multiplier)
-        print("Attack Information: Base = \(baseAttack), Multiplier = \(multiplier)x, Total Damage = \(totalDamage)")
-        
-        updateBossHealth(damage: totalDamage)
+        updateBossHealth(damage: total)
         replaceSelectedCards()
         updateDeckCount()
         updateButtonVisibility()
@@ -362,6 +375,14 @@ class GameScene: SKScene {
 
     private func handleDiscard() {
         guard !selectedCards.isEmpty else { return }
+        
+        discardLeft = max(0, discardLeft - 1)
+        discardLeftLabel.text = "Discards Left: \(discardLeft)"
+        if discardLeft == 0 {
+            discardButton.color = .gray
+            discardButton.colorBlendFactor = 0.7
+        }
+        
         replaceSelectedCards()
         updateDeckCount()
         updateButtonVisibility()
@@ -403,15 +424,22 @@ class GameScene: SKScene {
         victoryLabel.run(.sequence([.unhide(), .scale(to: 1.2, duration: 0.5), .scale(to: 0.9, duration: 0.2), .scale(to: 1.0, duration: 0.2)]))
         isUserInteractionEnabled = false
     }
-
-    // MARK: - Combo Calculator w/ Named Spells
-    private func calculateComboMultiplier(for cards: [CardNode]) -> Double {
-        let n = cards.count
-        guard (1...4).contains(n) else {
-            print("Combo triggered: Invalid hand size (\(n)) → Basic Spell 1.0×")
-            return 1.0
+    
+    // MARK: - Combo Info Update
+    private func updateComboInfo() {
+        guard !selectedCards.isEmpty else {
+            comboInfoLabel.text = ""
+            return
         }
+        let base = selectedCards.reduce(0) { $0 + $1.attackValue }
+        let (name, mult) = evaluateCombo(for: selectedCards)
+        let damage = Int(Double(base) * mult)
+        comboInfoLabel.text = "\(name): \(damage)"
+    }
 
+    // MARK: - Evaluate Combo
+    private func evaluateCombo(for cards: [CardNode]) -> (String, Double) {
+        let n = cards.count
         let values = cards.map { $0.attackValue }
         let elements = cards.map { $0.cardType }
         let valueCounts = Dictionary(grouping: values, by: { $0 }).mapValues { $0.count }
@@ -420,98 +448,44 @@ class GameScene: SKScene {
 
         switch n {
         case 1:
-            print("Combo triggered: Basic Spell → 1.0×")
-            return 1.0
-
+            return ("Basic Spell", 1.0)
         case 2:
-            // 2‑Spell
-            if isSameValue {
-                print("Combo triggered: Double Spell → 1.5×")
-                return 1.5
+            if isSameValue { return ("Double Spell", 1.5) }
+            let set = Set(elements)
+            switch set {
+            case Set(["fire","water"]): return ("Steam", 1.1)
+            case Set(["earth","wind"]): return ("Sandstorm", 1.1)
+            case Set(["fire","wind"]): return ("Heat", 1.2)
+            case Set(["fire","earth"]): return ("Lava", 1.2)
+            case Set(["water","wind"]): return ("Storm", 1.2)
+            case Set(["water","earth"]): return ("Nature", 1.2)
+            default: return ("Basic Spell", 1.0)
             }
-            let pairSet = Set(elements)
-            switch pairSet {
-            case Set(["fire","water"]):
-                print("Combo triggered: Fire + Water: Steam → 1.1×")
-                return 1.1
-            case Set(["earth","wind"]):
-                print("Combo triggered: Earth + Wind: Sandstorm → 1.1×")
-                return 1.1
-            case Set(["fire","wind"]):
-                print("Combo triggered: Fire + Wind: Heat → 1.2×")
-                return 1.2
-            case Set(["fire","earth"]):
-                print("Combo triggered: Fire + Earth: Lava → 1.2×")
-                return 1.2
-            case Set(["water","wind"]):
-                print("Combo triggered: Water + Wind: Storm → 1.2×")
-                return 1.2
-            case Set(["water","earth"]):
-                print("Combo triggered: Water + Earth: Nature → 1.2×")
-                return 1.2
-            default:
-                print("Combo triggered: Basic Spell → 1.0×")
-                return 1.0
-            }
-
         case 3:
-            // 3‑Spell
-            if elementCounts.values.contains(3) {
-                print("Combo triggered: Triple Spell → 2.0×")
-                return 2.0
-            }
-            if Set(elements).count == 3 && isSameValue {
-                print("Combo triggered: Synergy → 2.2×")
-                return 2.2
-            }
-            print("Combo triggered: Basic Spell → 1.0×")
-            return 1.0
-
+            if elementCounts.values.contains(3) { return ("Triple Spell", 2.0) }
+            if Set(elements).count == 3 && isSameValue { return ("Synergy", 2.2) }
+            return ("Basic Spell", 1.0)
         case 4:
-            // 4‑Spell
-            if elementCounts.values.contains(4) {
-                print("Combo triggered: Quad Spell → 2.5×")
-                return 2.5
-            }
-            if Set(elements).count == 4 && isSameValue {
-                print("Combo triggered: Harmony → 2.0×")
-                return 2.0
-            }
+            if elementCounts.values.contains(4) { return ("Quad Spell", 2.5) }
+            if Set(elements).count == 4 && isSameValue { return ("Harmony", 2.0) }
             let doubles = elementCounts.filter { $0.value == 2 }.map { $0.key }
             if doubles.count == 2 {
-                let comboSet = Set(doubles)
-                switch comboSet {
-                case Set(["fire","water"]):
-                    print("Combo triggered: Double Steam → 1.5×")
-                    return 1.5
-                case Set(["earth","wind"]):
-                    print("Combo triggered: Double Sandstorm → 1.5×")
-                    return 1.5
-                case Set(["fire","wind"]):
-                    print("Combo triggered: Double Heat → 2.0×")
-                    return 2.0
-                case Set(["fire","earth"]):
-                    print("Combo triggered: Double Lava → 2.0×")
-                    return 2.0
-                case Set(["water","wind"]):
-                    print("Combo triggered: Double Storm → 2.0×")
-                    return 2.0
-                case Set(["water","earth"]):
-                    print("Combo triggered: Double Nature → 2.0×")
-                    return 2.0
-                default:
-                    break
+                let combo = Set(doubles)
+                switch combo {
+                case Set(["fire","water"]): return ("Double Steam", 1.5)
+                case Set(["earth","wind"]): return ("Double Sandstorm", 1.5)
+                case Set(["fire","wind"]): return ("Double Heat", 2.0)
+                case Set(["fire","earth"]): return ("Double Lava", 2.0)
+                case Set(["water","wind"]): return ("Double Storm", 2.0)
+                case Set(["water","earth"]): return ("Double Nature", 2.0)
+                default: break
                 }
             }
-            print("Combo triggered: Basic Spell → 1.0×")
-            return 1.0
-
+            return ("Basic Spell", 1.0)
         default:
-            print("Combo triggered: Fallback Basic Spell → 1.0×")
-            return 1.0
+            return ("Basic Spell", 1.0)
         }
     }
-
 
 
     private func scaleCard(_ card: SKSpriteNode) {
