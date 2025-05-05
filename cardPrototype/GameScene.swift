@@ -305,6 +305,7 @@ class GameScene: SKScene {
         card.valueLabel.text = "\(def.value)"
         card.valueLabel.isHidden = true
         scaleCard(card)
+        addGlow(to: card)
         addChild(card)
         playAreaCards.append(card)
 
@@ -344,6 +345,7 @@ class GameScene: SKScene {
             card.valueLabel.text = "\(def.value)"
             card.valueLabel.isHidden = true
             scaleCard(card)
+            addGlow(to: card)
             addChild(card)
             playAreaCards.append(card)
 
@@ -514,6 +516,30 @@ class GameScene: SKScene {
         card.run(.group([move, flip])) {
             card.run(pop) { completion() }
         }
+    }
+    
+    private func addGlow(to card: SKSpriteNode) {
+        // 1) compute the real, scaled size of the card
+        let targetSize = CGSize(width: card.frame.width + 30,
+                                height: card.frame.height + 40)
+
+        // 2) make a rectangular shape with sharp corners
+        let glow = SKShapeNode(rectOf: targetSize, cornerRadius: 0)
+        glow.name = "glow"
+        glow.strokeColor = .yellow
+        glow.lineWidth = 4
+        glow.glowWidth = 4
+        glow.zPosition = card.zPosition - 1
+
+        // 3) center it on the card
+        glow.position = CGPoint.zero
+        card.addChild(glow)
+        
+        // Animate alpha for pulsing glow effect
+        let fadeOut = SKAction.fadeAlpha(to: 0.5, duration: 0.8)
+        let fadeIn = SKAction.fadeAlpha(to: 1.0, duration: 0.8)
+        let pulse = SKAction.repeatForever(SKAction.sequence([fadeOut, fadeIn]))
+        glow.run(pulse)
     }
 }
 
